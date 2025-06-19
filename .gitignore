@@ -1,0 +1,46 @@
+# Ignore migration state file
+migration_state.yaml
+
+# Common editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+
+# Logs
+*.log
+
+# Local development files
+*.local
+
+# AWS credentials
+*.pem
+*.p12
+*.crt
+*.key
+
+# Kubernetes files (if any)
+*.yaml.bak
+*.yaml.tmp
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# Environment files
+.env
+.env.local
+
+# Restore pod manifest (can be regenerated)
+restore-pod.yaml
