@@ -278,7 +278,7 @@ dump_database() {
             echo "Password length: \${#PGPASSWORD}"
         fi
         
-        pg_dump -h $SOURCE_HOST -U $db_owner -d ${db_name}_db -F c -Z 9 -f /tmp/${db_name}.sql.gz
+        pg_dump -h $SOURCE_HOST -U $db_owner -d ${db_name}_db -F c -Z 9 -f /tmp/${db_name}.dump 2>/tmp/${db_name}.log
         if [ \$? -eq 0 ]; then
             echo "Database dump completed successfully."
         else
@@ -306,10 +306,10 @@ upload_to_s3() {
     log_info "Uploading dump to S3 bucket: $S3_BUCKET"
     ssh ubuntu@$INSTANCE_ID << EOF
         set -e
-        aws s3 cp /tmp/${db_name}.sql.gz $S3_BUCKET --region $AWS_REGION
+        aws s3 cp /tmp/${db_name}.dump $S3_BUCKET --region $AWS_REGION
         if [ \$? -eq 0 ]; then
             echo "Upload completed successfully."
-            rm -f /tmp/${db_name}.sql.gz
+            rm -f /tmp/${db_name}.dump
             echo "Removed local dump file."
         else
             echo "Upload failed."
@@ -402,7 +402,8 @@ restore_database() {
     fi
     
     log_info "Getting GCP database password..."
-    GCP_DB_PASSWORD=$(pass db/gcloud-non-pro/$db_owner)
+    GCP_DB_PASSWORD_RAW=$(pass db/opusmatch-non-pro/$db_owner)
+    GCP_DB_PASSWORD=$(python3 -c "import urllib.parse; print(urllib.parse.unquote(\"$GCP_DB_PASSWORD_RAW\"))")
     
     if [ -z "$GCP_DB_PASSWORD" ]; then
         log_error "Failed to get GCP database password. Exiting." "exit"
@@ -457,14 +458,15 @@ restore_database() {
         export AWS_DEFAULT_REGION='$AWS_REGION'
         
         # Download dump from S3
-        aws s3 cp $S3_BUCKET${db_name}.sql.gz /tmp/${db_name}.sql.gz --region $AWS_REGION
-        
+        if [[ ! -f /tmp/${db_name}.dump ]]; then
+          aws s3 cp $S3_BUCKET${db_name}.dump /tmp/${db_name}.dump --region $AWS_REGION        
+        fi
         # Restore to GCP
         export PGPASSWORD='$GCP_DB_PASSWORD'
-        pg_restore -h $TARGET_HOST -U $db_owner -d ${db_name}_db -c -F c /tmp/${db_name}.sql.gz
-        
+        pg_restore --no-owner -h $TARGET_HOST -U $db_owner -d ${db_name}_db -c -F c /tmp/${db_name}.dump
+
         # Clean up
-        rm -f /tmp/${db_name}.sql.gz
+        rm -f /tmp/${db_name}.dump
     "
     
     if [ $? -ne 0 ]; then
