@@ -278,13 +278,17 @@ dump_database() {
             echo "Password length: \${#PGPASSWORD}"
         fi
         
-        pg_dump -h $SOURCE_HOST -U $db_owner -d ${db_name}_db -F c -Z 9 -f /tmp/${db_name}.dump 2>/tmp/${db_name}.log
-        if [ \$? -eq 0 ]; then
-            echo "Database dump completed successfully."
+        echo "Starting pg_dump for ${db_name}_db. This may take a while..."
+        # Run pg_dump synchronously. Redirect stderr to a log file to capture progress and errors.
+        # The 'set -e' at the top of the heredoc will handle the exit on failure.
+        if [ '$SCHEMA_ONLY' = true ]; then
+            echo 'Schema-only mode enabled - dumping schema without data'
+            pg_dump -h $SOURCE_HOST -U $db_owner -d ${db_name}_db --schema-only  --no-owner --no-acl -f /tmp/${db_name}.dump 2> /tmp/${db_name}.dump.log
         else
-            echo "Database dump failed."
-            exit 1
+            pg_dump -h $SOURCE_HOST -U $db_owner -d ${db_name}_db -F c -Z 9 -f /tmp/${db_name}.dump 2> /tmp/${db_name}.dump.log
         fi
+        
+        echo "Database dump command finished successfully."
 EOF
 
     if [ $? -ne 0 ]; then
@@ -463,7 +467,12 @@ restore_database() {
         fi
         # Restore to GCP
         export PGPASSWORD='$GCP_DB_PASSWORD'
-        pg_restore --no-owner -h $TARGET_HOST -U $db_owner -d ${db_name}_db -c -F c /tmp/${db_name}.dump
+        if [ '$SCHEMA_ONLY' = true ]; then
+            echo 'Schema-only mode enabled - restoring schema without data'
+            pg_restore --no-owner -h $TARGET_HOST -U $db_owner -d ${db_name}_db -c -F c --schema-only /tmp/${db_name}.dump
+        else
+            pg_restore --no-owner -h $TARGET_HOST -U $db_owner -d ${db_name}_db -c -F c /tmp/${db_name}.dump
+        fi
 
         # Clean up
         rm -f /tmp/${db_name}.dump
@@ -504,10 +513,11 @@ show_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --dry-run     Show what would be done without actually performing the migration"
-    echo "  --retry       Retry failed or pending steps from previous migration attempts"
-    echo "  --debug       Enable debug output for troubleshooting"
-    echo "  --help        Display this help and exit"
+    echo "  --dry-run       Show what would be done without actually performing the migration"
+    echo "  --retry         Retry failed or pending steps from previous migration attempts"
+    echo "  --schema-only   Dump and restore schema only (no data)"
+    echo "  --debug         Enable debug output for troubleshooting"
+    echo "  --help          Display this help and exit"
     echo ""
 }
 
@@ -516,6 +526,7 @@ main() {
     DRY_RUN=false
     RETRY=false
     DEBUG=false
+    SCHEMA_ONLY=false
     
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -525,6 +536,10 @@ main() {
                 ;;
             --retry)
                 RETRY=true
+                shift
+                ;;
+            --schema-only)
+                SCHEMA_ONLY=true
                 shift
                 ;;
             --debug)
@@ -565,12 +580,15 @@ main() {
     if [ "$DRY_RUN" = true ]; then
         log_info "DRY RUN mode enabled, no actual operations will be performed."
         log_info "Would perform the following steps for database $DB_NAME:"
+        if [ "$SCHEMA_ONLY" = true ]; then
+            log_info "SCHEMA-ONLY mode: Will dump and restore schema without data"
+        fi
         log_info "1. Get EC2 instance ID"
         log_info "2. Verify required tools on EC2"
-        log_info "3. Dump database from AWS RDS"
+        log_info "3. Dump database from AWS RDS$([ "$SCHEMA_ONLY" = true ] && echo " (schema only)")"
         log_info "4. Upload dump to S3"
         log_info "5. Create Kubernetes restore pod"
-        log_info "6. Restore database to GCP Cloud SQL"
+        log_info "6. Restore database to GCP Cloud SQL$([ "$SCHEMA_ONLY" = true ] && echo " (schema only)")"
         log_info "7. Clean up resources"
         exit 0
     fi
